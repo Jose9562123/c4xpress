@@ -66,7 +66,7 @@ const replies: Record<string, Reply> = {
     action: "rastreamento"
   },
   cotacao: {
-    text: "Posso ajudar com uma nova cotação. Conte para nossa equipe o tipo de carga, a origem e o destino.",
+    text: "Posso ajudar com uma nova solicitação de coleta. Informe os dados da carga e os endereços de coleta e entrega.",
     action: "cotacao"
   },
   contato: {
@@ -139,7 +139,7 @@ export default function VirtualAssistant() {
                   >
                     {reply.action === "rastreamento"
                       ? "Ir para acompanhamento"
-                      : "Solicitar cotação"}
+                      : "Solicitar coleta"}
                   </a>
                 )}
               </div>
@@ -213,7 +213,7 @@ export default function VirtualAssistant() {
                 }}
                 className="assistant-option"
               >
-                Pedir uma cotação
+                Solicitar coleta
               </button>
               <button
                 type="button"

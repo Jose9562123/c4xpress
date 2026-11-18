@@ -1,15 +1,20 @@
+import "dotenv/config";
 import axios from "axios";
 import { load } from "cheerio";
 import express from "express";
+import { solicitarColetaSsw } from "./sswColeta.js";
 
 const MAX_BODY_BYTES = "8kb";
 const MAX_PENDING_REQUESTS = 100;
 const SSW_REQUEST_INTERVAL_MS = 55;
+const MAX_COLLECTIONS_PER_IP = 3;
+const COLLECTION_RATE_WINDOW_MS = 15 * 60 * 1000;
 
 const port = Number(process.env.API_PORT || 3001);
 const app = express();
 let nextSswRequestAt = 0;
 let pendingRequests = 0;
+const collectionRequestsByIp = new Map();
 
 function isValidCpf(value) {
   if (/^(\d)\1{10}$/.test(value)) return false;
@@ -45,6 +50,133 @@ function isValidCnpj(value) {
     [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
   );
   return value.endsWith(`${first}${second}`);
+}
+
+function validateColetaRequest(body) {
+  const errors = [];
+  const fields = {};
+  const text = (name, { required = false, maxLength = 200 } = {}) => {
+    const rawValue = body[name];
+    if (typeof rawValue !== "string") {
+      if (required) errors.push(`Informe ${name}.`);
+      return "";
+    }
+
+    const value = rawValue.trim();
+    if (required && !value) errors.push(`Informe ${name}.`);
+    if (value.length > maxLength) errors.push(`${name} excede o limite permitido.`);
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) {
+      errors.push(`${name} contém caracteres inválidos.`);
+    }
+    return value;
+  };
+  const decimal = (name, { required = false, allowZero = false } = {}) => {
+    const value = text(name, { required, maxLength: 18 }).replace(",", ".");
+    if (!value && !required) return "0";
+    if (!/^\d+(?:\.\d{1,3})?$/.test(value)) {
+      errors.push(`Informe ${name} com um número válido.`);
+      return "0";
+    }
+    const number = Number(value);
+    if (!Number.isFinite(number) || number > 1000000000 || (!allowZero && number <= 0)) {
+      errors.push(`Informe ${name} dentro do limite permitido.`);
+    }
+    return value;
+  };
+
+  fields.cnpjRemetente = text("cnpjRemetente", { required: true, maxLength: 20 }).replace(/\D/g, "");
+  fields.cnpjDestinatario = text("cnpjDestinatario", { required: true, maxLength: 20 }).replace(/\D/g, "");
+  fields.numeroNF = text("numeroNF", { maxLength: 40 });
+  fields.tipoPagamento = text("tipoPagamento", { required: true, maxLength: 1 });
+  fields.enderecoEntrega = text("enderecoEntrega", { required: true, maxLength: 500 });
+  fields.cepEntrega = text("cepEntrega", { required: true, maxLength: 12 }).replace(/\D/g, "");
+  fields.solicitante = text("solicitante", { required: true, maxLength: 100 });
+  fields.limiteColeta = text("limiteColeta", { required: true, maxLength: 25 });
+  fields.quantidade = text("quantidade", { required: true, maxLength: 6 });
+  fields.peso = decimal("peso", { required: true });
+  fields.observacao = text("observacao", { maxLength: 1000 });
+  fields.instrucao = text("instrucao", { maxLength: 1000 });
+  fields.cubagem = decimal("cubagem", { allowZero: true });
+  fields.valorMerc = decimal("valorMerc", { allowZero: true });
+  fields.especie = text("especie", { maxLength: 60 });
+  fields.chaveNF = text("chaveNF", { maxLength: 44 }).replace(/\D/g, "");
+  fields.nroPedido = text("nroPedido", { maxLength: 60 });
+  fields.mercadoria = text("mercadoria", { required: true, maxLength: 120 });
+  fields.cepEndColeta = text("cepEndColeta", { required: true, maxLength: 12 }).replace(/\D/g, "");
+  fields.logradouroEndColeta = text("logradouroEndColeta", { required: true, maxLength: 150 });
+  fields.numeroEndColeta = text("numeroEndColeta", { required: true, maxLength: 20 });
+  fields.complementoEndColeta = text("complementoEndColeta", { maxLength: 100 });
+  fields.bairroEndColeta = text("bairroEndColeta", { required: true, maxLength: 100 });
+  fields.nomeRemetente = text("nomeRemetente", { required: true, maxLength: 120 });
+  fields.reversa = text("reversa", { maxLength: 1 }) || "N";
+
+  if (fields.cnpjRemetente.length !== 14 || !isValidCnpj(fields.cnpjRemetente)) {
+    errors.push("Informe um CNPJ válido para o remetente.");
+  }
+  if (
+    fields.cnpjDestinatario.length !== 14 ||
+    !isValidCnpj(fields.cnpjDestinatario)
+  ) {
+    errors.push("Informe um CNPJ válido para o destinatário.");
+  }
+  if (!["O", "D"].includes(fields.tipoPagamento)) {
+    errors.push("Selecione se o frete será pago na origem ou no destino.");
+  }
+  if (!/^\d{8}$/.test(fields.cepEntrega)) {
+    errors.push("Informe um CEP de entrega com 8 dígitos.");
+  }
+  if (!/^\d{8}$/.test(fields.cepEndColeta)) {
+    errors.push("Informe um CEP de coleta com 8 dígitos.");
+  }
+  if (!/^\d+$/.test(fields.quantidade) || Number(fields.quantidade) < 1) {
+    errors.push("Informe a quantidade de volumes.");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(fields.limiteColeta)) {
+    errors.push("Informe a data e o horário limite da coleta.");
+  } else {
+    const [date, time] = fields.limiteColeta.split("T");
+    const [year, month, day] = date.split("-").map(Number);
+    const [hour, minute] = time.split(":").map(Number);
+    const collectionDate = new Date(year, month - 1, day, hour, minute);
+    if (
+      Number.isNaN(collectionDate.getTime()) ||
+      collectionDate.getFullYear() !== year ||
+      collectionDate.getMonth() !== month - 1 ||
+      collectionDate.getDate() !== day ||
+      collectionDate.getHours() !== hour ||
+      collectionDate.getMinutes() !== minute ||
+      collectionDate.getTime() <= Date.now()
+    ) {
+      errors.push("A data e o horário da coleta devem estar no futuro.");
+    } else {
+      fields.limiteColeta = `${fields.limiteColeta}:00`;
+    }
+  }
+  if (!["S", "N"].includes(fields.reversa)) {
+    errors.push("A opção de coleta reversa é inválida.");
+  }
+
+  return { fields, errors };
+}
+
+function isCollectionRateLimited(ip) {
+  const now = Date.now();
+  if (collectionRequestsByIp.size > 1000) {
+    for (const [address, entry] of collectionRequestsByIp) {
+      if (entry.resetAt <= now) collectionRequestsByIp.delete(address);
+    }
+  }
+  const record = collectionRequestsByIp.get(ip);
+  if (!record || record.resetAt <= now) {
+    collectionRequestsByIp.set(ip, {
+      count: 1,
+      resetAt: now + COLLECTION_RATE_WINDOW_MS
+    });
+    return false;
+  }
+  if (record.count >= MAX_COLLECTIONS_PER_IP) return true;
+  record.count += 1;
+  return false;
 }
 
 function normalizeKey(value) {
@@ -511,6 +643,82 @@ app.get("/api/rastreio", (req, res) => {
   res.json({
     message: "Servidor C4 Xpress ativo. Envie um POST para testar o rastreio."
   });
+});
+
+app.post("/api/coleta", async (req, res) => {
+  if (!req.is("application/json")) {
+    res.status(415).json({ error: "Envie os dados no formato JSON." });
+    return;
+  }
+
+  const { fields, errors } = validateColetaRequest(req.body ?? {});
+  if (errors.length > 0) {
+    res.status(400).json({ error: errors[0] });
+    return;
+  }
+
+  const credentials = {
+    domain: process.env.SSW_DOMAIN?.trim() || "",
+    username: process.env.SSW_USERNAME?.trim() || "",
+    password: process.env.SSW_PASSWORD || "",
+    cnpjSolicitante: process.env.SSW_CNPJ_EDI?.replace(/\D/g, "") || ""
+  };
+  if (
+    !credentials.domain ||
+    !credentials.username ||
+    !credentials.password ||
+    credentials.cnpjSolicitante.length !== 14
+  ) {
+    res.status(503).json({
+      error: "A integração de coleta está indisponível. Entre em contato com a C4 Xpress."
+    });
+    return;
+  }
+  if (isCollectionRateLimited(req.ip)) {
+    res.set("Retry-After", String(COLLECTION_RATE_WINDOW_MS / 1000));
+    res.status(429).json({
+      error: "Limite de solicitações atingido. Tente novamente mais tarde."
+    });
+    return;
+  }
+  if (pendingRequests >= MAX_PENDING_REQUESTS) {
+    res.set("Retry-After", "1");
+    res.status(429).json({
+      error: "Muitas solicitações simultâneas. Aguarde um momento e tente novamente."
+    });
+    return;
+  }
+
+  pendingRequests += 1;
+  try {
+    await reserveSswSlot();
+    const result = await solicitarColetaSsw(fields, credentials);
+    if (result.erro !== 0) {
+      res.status(422).json({
+        error: result.mensagem || "O SSW não aceitou a solicitação de coleta."
+      });
+      return;
+    }
+    res.status(200).json({
+      message: result.mensagem || "Solicitação de coleta enviada com sucesso.",
+      numeroColeta: result.numeroColeta
+    });
+  } catch (error) {
+    const status =
+      axios.isAxiosError(error) &&
+      (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT")
+        ? 504
+        : 502;
+    console.error("Falha ao enviar uma solicitação de coleta ao SSW.");
+    res.status(status).json({
+      error:
+        status === 504
+          ? "A solicitação excedeu o tempo limite. Tente novamente."
+          : "Não foi possível registrar a coleta no SSW. Tente novamente mais tarde."
+    });
+  } finally {
+    pendingRequests -= 1;
+  }
 });
 
 app.post("/api/rastreio/detalhes", async (req, res) => {

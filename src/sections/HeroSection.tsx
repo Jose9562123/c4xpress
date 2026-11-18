@@ -27,7 +27,7 @@ export default function HeroSection() {
           </p>
           <div className="flex flex-col gap-3 sm:flex-row">
             <a href="#cotacao" className="btn-primary text-center text-base">
-              Solicitar cotação
+              Solicitar coleta
             </a>
             <a
               href="/rastreamento"

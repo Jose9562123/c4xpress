@@ -75,7 +75,7 @@ export default function Header() {
           href={sectionHref("cotacao")}
           className="btn-primary hidden text-sm lg:block"
         >
-          FAÇA SUA COTAÇÃO
+          SOLICITAR COLETA
         </a>
 
         <button
@@ -151,7 +151,7 @@ export default function Header() {
               className="btn-primary text-center mt-2"
               onClick={() => setIsOpen(false)}
             >
-              FAÇA SUA COTAÇÃO
+              SOLICITAR COLETA
             </a>
           </nav>
         </div>
