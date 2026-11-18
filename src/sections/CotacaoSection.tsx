@@ -59,9 +59,30 @@ function getApiMessage(value: unknown, key: string) {
 }
 
 export default function CotacaoSection() {
+  const [isFormVisible, setIsFormVisible] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [success, setSuccess] = useState<{ message: string; number: string } | null>(null)
+
+  function openForm() {
+    setIsFormVisible(true)
+    window.setTimeout(() => {
+      document.getElementById('coleta-formulario')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }, 0)
+  }
+
+  function closeForm() {
+    setIsFormVisible(false)
+    window.setTimeout(() => {
+      document.getElementById('cotacao')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      })
+    }, 0)
+  }
 
   async function submitColeta(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -133,15 +154,83 @@ export default function CotacaoSection() {
   return (
     <section id="cotacao" className="bg-slate-100 px-4 py-20 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-5xl">
-        <SectionTitle
-          titulo="Solicitação de coleta"
-          subtitulo="Preencha os dados da carga e envie sua solicitação diretamente para a C4 Xpress pelo SSW."
-        />
+        <div hidden={isFormVisible}>
+          <SectionTitle
+            titulo="Solicitação de coleta"
+            subtitulo="Organize as informações da carga e solicite a coleta diretamente com a C4 Xpress."
+          />
+          <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="relative overflow-hidden rounded-3xl bg-c4-blue-dark p-8 text-white shadow-xl shadow-blue-950/10 sm:p-10">
+              <div className="absolute -right-16 -top-16 h-56 w-56 rounded-full border-[32px] border-white/5" />
+              <div className="relative">
+                <span className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-blue-100">
+                  <span className="h-2 w-2 rounded-full bg-c4-red" />
+                  Atendimento C4 Xpress
+                </span>
+                <h3 className="mt-6 max-w-lg text-3xl font-extrabold leading-tight sm:text-4xl">
+                  Sua coleta começa com as informações certas.
+                </h3>
+                <p className="mt-4 max-w-xl leading-relaxed text-blue-100">
+                  Tenha os dados de origem, entrega e carga em mãos para enviar
+                  uma solicitação completa.
+                </p>
+                <ul className="mt-8 space-y-3 text-sm text-blue-100">
+                  <li>• Endereços de coleta e entrega</li>
+                  <li>• Data e horário limite</li>
+                  <li>• Nota fiscal, volumes e peso</li>
+                </ul>
+              </div>
+            </div>
 
-        <form
-          onSubmit={submitColeta}
-          className="space-y-8 rounded-3xl border border-slate-200 bg-white p-5 shadow-xl shadow-slate-900/5 sm:p-8 lg:p-10"
-        >
+            <div className="flex flex-col rounded-3xl border border-slate-200 bg-white p-8 shadow-sm sm:p-10">
+              <span className="text-xs font-bold uppercase tracking-[0.16em] text-c4-red">
+                Solicitação de coleta
+              </span>
+              <h3 className="mt-3 text-2xl font-extrabold text-c4-blue-dark sm:text-3xl">
+                Pronto para solicitar?
+              </h3>
+              <p className="mt-3 leading-relaxed text-slate-600">
+                Preencha o formulário C4 para registrar os dados e enviar seu
+                pedido de coleta pelo SSW.
+              </p>
+              <button
+                type="button"
+                onClick={openForm}
+                className="btn-primary mt-8 w-full"
+              >
+                Solicitar coleta
+              </button>
+              <a
+                href={sswCollectionUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 text-center text-sm font-semibold text-c4-blue-dark underline decoration-c4-blue-light underline-offset-4 hover:text-c4-red"
+              >
+                Abrir formulário padrão do SSW
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div id="coleta-formulario" hidden={!isFormVisible}>
+          <div className="mb-5">
+            <button
+              type="button"
+              onClick={closeForm}
+              className="text-sm font-semibold text-c4-blue-dark underline underline-offset-4 hover:text-c4-red"
+            >
+              ← Voltar
+            </button>
+          </div>
+          <SectionTitle
+            titulo="Preencha os dados da coleta"
+            subtitulo="Confira as informações antes de enviar sua solicitação."
+          />
+
+          <form
+            onSubmit={submitColeta}
+            className="space-y-8 rounded-3xl border border-slate-200 bg-white p-5 shadow-xl shadow-slate-900/5 sm:p-8 lg:p-10"
+          >
           <section aria-labelledby="coleta-origem-heading">
             <div className="mb-5 border-b border-slate-100 pb-3">
               <h3 id="coleta-origem-heading" className="text-xl font-extrabold text-c4-blue-dark">
@@ -432,11 +521,22 @@ export default function CotacaoSection() {
             >
               Abrir formulário de coleta do SSW
             </a>
-            <button type="submit" className="btn-primary w-full sm:w-auto" disabled={isSubmitting}>
-              {isSubmitting ? 'Enviando solicitação...' : 'Solicitar coleta'}
-            </button>
+            <div className="flex w-full flex-col-reverse gap-3 sm:w-auto sm:flex-row">
+              <button
+                type="button"
+                onClick={closeForm}
+                className="btn-secondary w-full sm:w-auto"
+                disabled={isSubmitting}
+              >
+                Voltar
+              </button>
+              <button type="submit" className="btn-primary w-full sm:w-auto" disabled={isSubmitting}>
+                {isSubmitting ? 'Enviando solicitação...' : 'Solicitar coleta'}
+              </button>
+            </div>
           </div>
-        </form>
+          </form>
+        </div>
       </div>
     </section>
   )
